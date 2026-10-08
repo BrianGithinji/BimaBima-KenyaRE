@@ -325,3 +325,136 @@ body {
 .auth-submit { width: 100%; margin-top: 4px; padding: 12px; font-size: 13px; }
 
 .auth-footer { text-align: center; font-size: 10px; color: var(--text-faint); margin-top: 24px; letter-spacing: 0.03em; }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button (hidden on desktop) ── */
+.hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px; height: 36px;
+  background: transparent; border: none;
+  cursor: pointer; padding: 4px; margin-right: 12px; flex-shrink: 0;
+}
+.hamburger span {
+  display: block; width: 22px; height: 2px;
+  background: var(--text); border-radius: 2px;
+  transition: all 0.2s;
+}
+
+/* ── Bottom nav (hidden on desktop) ── */
+.bottom-nav { display: none; }
+
+/* ── Sidebar overlay (hidden on desktop) ── */
+.sidebar-overlay { display: none; }
+
+@media (max-width: 768px) {
+
+  /* Shell stacks vertically */
+  .shell { flex-direction: column; height: 100dvh; }
+
+  /* Sidebar slides in from left as drawer */
+  .sidebar {
+    position: fixed; top: 0; left: 0;
+    width: 260px; height: 100dvh;
+    z-index: 300;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .sidebar.sidebar-open { transform: translateX(0); }
+
+  /* Dim overlay behind open sidebar */
+  .sidebar-overlay {
+    display: block;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 299;
+  }
+
+  /* Show hamburger */
+  .hamburger { display: flex; }
+
+  /* Main fills remaining height above bottom nav */
+  .main { flex: 1; min-height: 0; padding-bottom: 60px; }
+
+  /* Topbar */
+  .topbar { padding: 0 14px; height: 50px; }
+  .topbar-title { font-size: 13px; }
+  .topbar-sub   { display: none; }
+
+  /* Page padding */
+  .page { padding: 14px; }
+
+  /* Bottom nav */
+  .bottom-nav {
+    display: flex;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 60px;
+    background: var(--primary-dk);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    z-index: 200;
+  }
+  .bottom-nav-btn {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 2px; background: transparent; border: none;
+    color: rgba(255,255,255,0.55); cursor: pointer;
+    transition: color 0.15s;
+    padding: 4px 2px;
+  }
+  .bottom-nav-btn.active { color: #fff; }
+  .bottom-nav-icon  { font-size: 16px; line-height: 1; }
+  .bottom-nav-label { font-size: 9px; font-weight: 600; letter-spacing: 0.03em; }
+
+  /* Grids collapse to single column */
+  .g2, .g3, .form-grid { grid-template-columns: 1fr; }
+
+  /* KPI grid — 2 columns on mobile */
+  .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .kpi { padding: 12px 14px; }
+  .kpi-value { font-size: 18px; }
+
+  /* Cards */
+  .card { padding: 14px 16px; }
+
+  /* Map height */
+  .map-box { height: 260px; }
+
+  /* Search input full width */
+  .search-input { max-width: 100%; }
+  .search-drop  { width: 100%; }
+
+  /* Result rows stack on very small screens */
+  .result-row { flex-direction: column; gap: 2px; }
+  .result-value { font-size: 12px; }
+
+  /* Decision box */
+  .decision-box { padding: 14px 16px; }
+  .decision-tier { font-size: 20px; }
+
+  /* Result block */
+  .result-block { padding: 16px 18px; }
+  .result-block h2 { font-size: 16px; }
+
+  /* Auth card */
+  .auth-card { padding: 28px 20px 24px; }
+
+  /* Pills wrap nicely */
+  .pills { gap: 6px; }
+  .pill  { padding: 4px 10px; font-size: 10px; }
+
+  /* Table — allow horizontal scroll */
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tbl { font-size: 11px; }
+  .tbl th, .tbl td { padding: 8px 10px; }
+}
+
+@media (max-width: 400px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+  .bottom-nav-label { display: none; }
+  .bottom-nav-icon  { font-size: 20px; }
+}

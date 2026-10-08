@@ -26,52 +26,66 @@ const TITLES = {
   anomalies: { title: "Flagged Risks",          sub: "Buildings whose loss profile does not match their construction type" },
 };
 
+const NAV_ICONS = {
+  agent:     "📄",
+  assessor:  "🔍",
+  overview:  "📊",
+  ep:        "📈",
+  portfolio: "🗺️",
+  anomalies: "⚠️",
+};
+
 export default function App() {
-  const [user, setUser]   = useState(null);
-  const [page, setPage]   = useState("assessor");
+  const [user, setUser]     = useState(null);
+  const [page, setPage]     = useState("assessor");
+  const [menuOpen, setMenu] = useState(false);
 
   if (!user) return <Auth onLogin={setUser} />;
 
   const { title, sub } = TITLES[page];
 
+  const navigate = (id) => { setPage(id); setMenu(false); };
+
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {/* Desktop sidebar */}
+      <aside className={`sidebar${menuOpen ? " sidebar-open" : ""}`}>
         <div className="sidebar-brand">
           <img src="/logo.png" alt="BimaBima" className="sidebar-logo" />
           <div className="sidebar-name">BimaBima</div>
           <div className="sidebar-tag">Smarter Underwriting. Stronger Tomorrow.</div>
         </div>
-
         <nav className="sidebar-nav">
           {NAV.map((n) => (
-            <button
-              key={n.id}
-              className={`nav-btn${page === n.id ? " active" : ""}`}
-              onClick={() => setPage(n.id)}
-            >
+            <button key={n.id} className={`nav-btn${page === n.id ? " active" : ""}`}
+              onClick={() => navigate(n.id)}>
               {n.label}
             </button>
           ))}
         </nav>
-
         <div className="sidebar-footer">
           Signed in as <strong style={{color:"rgba(255,255,255,0.7)"}}>{user.name}</strong><br />
           Nzoia Basin, Kenya<br />
-          <button
-            onClick={() => setUser(null)}
-            style={{marginTop:8,background:"rgba(255,255,255,0.1)",border:"none",color:"rgba(255,255,255,0.6)",borderRadius:6,padding:"4px 10px",fontSize:10,cursor:"pointer",letterSpacing:"0.03em"}}
-          >Sign Out</button>
+          <button onClick={() => setUser(null)}
+            style={{marginTop:8,background:"rgba(255,255,255,0.1)",border:"none",color:"rgba(255,255,255,0.6)",borderRadius:6,padding:"4px 10px",fontSize:10,cursor:"pointer"}}>
+            Sign Out
+          </button>
         </div>
       </aside>
 
+      {/* Mobile overlay */}
+      {menuOpen && <div className="sidebar-overlay" onClick={() => setMenu(false)} />}
+
       <div className="main">
         <header className="topbar">
-          <div>
+          {/* Hamburger — mobile only */}
+          <button className="hamburger" onClick={() => setMenu(!menuOpen)} aria-label="Menu">
+            <span /><span /><span />
+          </button>
+          <div style={{flex:1}}>
             <div className="topbar-title">{title}</div>
             <div className="topbar-sub">{sub}</div>
           </div>
-
         </header>
 
         <div className="page">
@@ -82,6 +96,17 @@ export default function App() {
           {page === "portfolio" && <Portfolio />}
           {page === "anomalies" && <Anomalies />}
         </div>
+
+        {/* Bottom nav — mobile only */}
+        <nav className="bottom-nav">
+          {NAV.map((n) => (
+            <button key={n.id} className={`bottom-nav-btn${page === n.id ? " active" : ""}`}
+              onClick={() => navigate(n.id)}>
+              <span className="bottom-nav-icon">{NAV_ICONS[n.id]}</span>
+              <span className="bottom-nav-label">{n.label}</span>
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );
