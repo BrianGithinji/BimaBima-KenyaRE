@@ -1,8 +1,5 @@
 const express    = require("express");
 const cors       = require("cors");
-const fs         = require("fs");
-const path       = require("path");
-const csv        = require("csv-parser");
 const multer     = require("multer");
 const XLSX       = require("xlsx");
 const serverless = require("serverless-http");
@@ -70,29 +67,11 @@ const SavedPortfolio = mongoose.models.SavedPortfolio || mongoose.model("SavedPo
 
 // ── CSV loader ────────────────────────────────────────────────────────────────
 
-const DATA_DIR = process.env.LAMBDA_TASK_ROOT || __dirname;
+// Data loaded directly from bundled JSON — no filesystem path issues
+const portfolio = require("./portfolio_data.json");
+const lossTable = require("./loss_data.json");
 
-function loadCSV(filename) {
-  return new Promise((resolve, reject) => {
-    const rows = [];
-    fs.createReadStream(path.join(DATA_DIR, filename))
-      .pipe(csv())
-      .on("data", (row) => rows.push(row))
-      .on("end",  () => resolve(rows))
-      .on("error", reject);
-  });
-}
-
-let portfolio  = [];
-let lossTable  = [];
-let dataLoaded = false;
-
-async function ensureData() {
-  if (dataLoaded) return;
-  portfolio  = await loadCSV("nzoia_underwriter_portfolio.csv");
-  lossTable  = await loadCSV("nzoia_underwriter_loss_table.csv");
-  dataLoaded = true;
-}
+async function ensureData() { /* data already loaded via require */ }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

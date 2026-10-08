@@ -9,7 +9,7 @@
   external_node_modules = ["pdfjs-dist", "mongoose", "xlsx", "canvas"]
 
 [functions.api]
-  included_files = ["netlify/functions/*.csv"]
+  included_files = ["netlify/functions/*.json"]
 
 [[redirects]]
   from   = "/api/*"
