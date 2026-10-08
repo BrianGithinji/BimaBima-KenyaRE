@@ -70,7 +70,7 @@ const SavedPortfolio = mongoose.models.SavedPortfolio || mongoose.model("SavedPo
 
 // ── CSV loader ────────────────────────────────────────────────────────────────
 
-const DATA_DIR = path.join(__dirname);
+const DATA_DIR = process.env.LAMBDA_TASK_ROOT || __dirname;
 
 function loadCSV(filename) {
   return new Promise((resolve, reject) => {
