@@ -4,8 +4,9 @@
   command = "npm run build"
 
 [functions]
-  directory      = "netlify/functions"
-  node_bundler   = "esbuild"
+  directory    = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pdfjs-dist", "mongoose", "xlsx", "canvas"]
 
 [[redirects]]
   from   = "/api/*"

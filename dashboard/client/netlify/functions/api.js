@@ -33,7 +33,11 @@ let dbConnected = false;
 
 async function connectDB() {
   if (dbConnected || mongoose.connection.readyState === 1) return;
-  await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
+  await mongoose.connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 30000,
+  });
   dbConnected = true;
 }
 
@@ -118,11 +122,9 @@ function recommendation(tier) {
 // ── middleware ────────────────────────────────────────────────────────────────
 
 app.use(async (req, res, next) => {
-  try {
-    await ensureData();
-    if (MONGO_URI) await connectDB();
-    next();
-  } catch (e) { res.status(500).json({ error: "Init failed: " + e.message }); }
+  try { await ensureData(); } catch (e) { return res.status(500).json({ error: "Data load failed: " + e.message }); }
+  if (MONGO_URI) connectDB().catch((e) => console.error("MongoDB:", e.message));
+  next();
 });
 
 // ── GET /api/portfolio ────────────────────────────────────────────────────────
