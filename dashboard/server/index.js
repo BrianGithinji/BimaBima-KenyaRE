@@ -22,7 +22,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 const app  = express();
 const PORT = 5000;
 
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL || "*",
+}));
 app.use(express.json());
 
 // ── CSV loader ────────────────────────────────────────────────────────────────

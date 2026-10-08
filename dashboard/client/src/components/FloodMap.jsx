@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Map, NavigationControl, AttributionControl, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -15,38 +15,112 @@ const TIER_LABEL = {
 
 const fmt = (n) => n >= 1e9 ? `KES ${(n/1e9).toFixed(2)}B` : `KES ${(n/1e6).toFixed(1)}M`;
 
-// Inline raster style — no external style.json needed, works offline
-const makeStyle = () => ({
+// ── Tile sources ──────────────────────────────────────────────────────────────
+const STREET_SOURCE = {
+  type: "raster",
+  tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+  tileSize: 256,
+  attribution: "© OpenStreetMap contributors",
+  maxzoom: 19,
+};
+
+const SAT_SOURCE = {
+  type: "raster",
+  tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+  tileSize: 256,
+  attribution: "© Esri, Maxar, Earthstar Geographics",
+  maxzoom: 19,
+};
+
+// Terrain DEM — AWS Terrain Tiles (free, global, reliable up to zoom 15)
+const TERRAIN_SOURCE = {
+  type: "raster-dem",
+  tiles: [
+    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+  ],
+  tileSize: 256,
+  maxzoom: 15,
+  encoding: "terrarium",
+};
+
+const makeStyle = (sat = false) => ({
   version: 8,
   sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
-      maxzoom: 19,
-    },
+    basemap: sat ? SAT_SOURCE : STREET_SOURCE,
+    terrain: TERRAIN_SOURCE,
   },
-  layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+  layers: [{ id: "basemap-tiles", type: "raster", source: "basemap" }],
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  terrain: { source: "terrain", exaggeration: 1.5 },
+  sky: {
+    "sky-color": "#199EF3",
+    "sky-horizon-blend": 0.5,
+    "horizon-color": "#ffffff",
+    "horizon-fog-blend": 0.5,
+    "fog-color": "#0000ff",
+    "fog-ground-blend": 0.5,
+  },
 });
+
+// ── Toggle button overlay ─────────────────────────────────────────────────────
+const btnStyle = (active) => ({
+  padding: "5px 11px",
+  fontSize: 11,
+  fontWeight: 600,
+  border: "none",
+  cursor: "pointer",
+  background: active ? "#4f46e5" : "#fff",
+  color: active ? "#fff" : "#4a5568",
+  transition: "all 0.15s",
+});
+
+function MapToggle({ sat, onToggle, on3D, toggle3D }) {
+  return (
+    <div style={{
+      position: "absolute", top: 10, left: 10, zIndex: 10,
+      display: "flex", borderRadius: 8, overflow: "hidden",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.25)", border: "1px solid #e2e8f0",
+    }}>
+      <button style={btnStyle(!sat)} onClick={() => sat && onToggle()}>Street</button>
+      <button style={btnStyle(sat)}  onClick={() => !sat && onToggle()}>Satellite</button>
+      <button style={{ ...btnStyle(on3D), borderLeft: "1px solid #e2e8f0" }} onClick={toggle3D}>
+        3D
+      </button>
+    </div>
+  );
+}
+
+// ── Swap base layer without losing data layers ────────────────────────────────
+function swapBasemap(map, sat) {
+  const newSrc = sat ? SAT_SOURCE : STREET_SOURCE;
+  if (map.getSource("basemap")) {
+    // Update tiles in-place — avoids full style reload which would wipe data layers
+    map.getSource("basemap").setTiles(newSrc.tiles);
+  }
+}
 
 // ── Single-pin map (Assessor page) ───────────────────────────────────────────
 export function SinglePinMap({ lat, lon, tier, label }) {
   const containerRef = useRef(null);
+  const mapRef       = useRef(null);
+  const [sat, setSat]   = useState(false);
+  const [on3D, setOn3D] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const map = new Map({
       container: containerRef.current,
-      style: makeStyle(),
+      style: makeStyle(false),
       center: [lon, lat],
       zoom: 13,
+      pitch: 0,
+      bearing: 0,
       attributionControl: false,
     });
+    mapRef.current = map;
 
-    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new NavigationControl({ showCompass: true }), "top-right");
     map.addControl(new AttributionControl({ compact: true }), "bottom-right");
 
     map.on("load", () => {
@@ -101,22 +175,48 @@ export function SinglePinMap({ lat, lon, tier, label }) {
       map.on("mouseleave", "pin-dot", () => { map.getCanvas().style.cursor = ""; });
     });
 
-    return () => map.remove();
+    return () => { map.remove(); mapRef.current = null; };
   }, [lat, lon, tier, label]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  const handleToggleSat = () => {
+    const next = !sat;
+    setSat(next);
+    if (mapRef.current) swapBasemap(mapRef.current, next);
+  };
+
+  const handleToggle3D = () => {
+    const next = !on3D;
+    setOn3D(next);
+    const map = mapRef.current;
+    if (!map) return;
+    const currentZoom = map.getZoom();
+    map.easeTo({
+      pitch:   next ? 55 : 0,
+      bearing: next ? -20 : 0,
+      zoom:    next && currentZoom > 14 ? 14 : currentZoom,
+      duration: 800,
+    });
+  };
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <MapToggle sat={sat} onToggle={handleToggleSat} on3D={on3D} toggle3D={handleToggle3D} />
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    </div>
+  );
 }
 
 // ── Portfolio dot map ─────────────────────────────────────────────────────────
 export function PortfolioDotMap({ buildings, onSelect, selectedId }) {
-  const containerRef  = useRef(null);
-  const mapRef        = useRef(null);
-  const popupRef      = useRef(null);
-  const onSelectRef   = useRef(onSelect);
-  const mountedRef    = useRef(false);
-  const buildingsRef  = useRef(buildings);
+  const containerRef = useRef(null);
+  const mapRef       = useRef(null);
+  const popupRef     = useRef(null);
+  const onSelectRef  = useRef(onSelect);
+  const mountedRef   = useRef(false);
+  const buildingsRef = useRef(buildings);
+  const [sat, setSat]   = useState(false);
+  const [on3D, setOn3D] = useState(false);
 
-  // Keep refs fresh without re-triggering effects
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { buildingsRef.current = buildings; }, [buildings]);
 
@@ -144,14 +244,16 @@ export function PortfolioDotMap({ buildings, onSelect, selectedId }) {
 
     const map = new Map({
       container: containerRef.current,
-      style: makeStyle(),
+      style: makeStyle(false),
       center: [34.5, 0.5],
       zoom: 8,
+      pitch: 0,
+      bearing: 0,
       attributionControl: false,
     });
     mapRef.current = map;
 
-    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new NavigationControl({ showCompass: true }), "top-right");
     map.addControl(new AttributionControl({ compact: true }), "bottom-right");
 
     map.on("load", () => {
@@ -228,7 +330,7 @@ export function PortfolioDotMap({ buildings, onSelect, selectedId }) {
     return () => { popupRef.current?.remove(); map.remove(); mountedRef.current = false; };
   }, []);
 
-  // Update dots when filter changes — no remount needed
+  // Update dots when filter changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -244,5 +346,30 @@ export function PortfolioDotMap({ buildings, onSelect, selectedId }) {
       map.setFilter("dots-selected", ["==", ["get", "loc_id"], selectedId || ""]);
   }, [selectedId]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  const handleToggleSat = () => {
+    const next = !sat;
+    setSat(next);
+    if (mapRef.current) swapBasemap(mapRef.current, next);
+  };
+
+  const handleToggle3D = () => {
+    const next = !on3D;
+    setOn3D(next);
+    const map = mapRef.current;
+    if (!map) return;
+    const currentZoom = map.getZoom();
+    map.easeTo({
+      pitch:   next ? 55 : 0,
+      bearing: next ? -15 : 0,
+      zoom:    next && currentZoom > 14 ? 14 : currentZoom,
+      duration: 900,
+    });
+  };
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <MapToggle sat={sat} onToggle={handleToggleSat} on3D={on3D} toggle3D={handleToggle3D} />
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    </div>
+  );
 }
