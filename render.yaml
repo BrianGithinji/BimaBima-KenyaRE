@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: kenyare-server
+    runtime: node
+    rootDir: dashboard/server
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production

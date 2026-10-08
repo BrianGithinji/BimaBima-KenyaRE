@@ -1,0 +1,11 @@
+import pandas as pd
+df = pd.read_csv('nzoia_complete_flood_loss_dataset.csv')
+print('Columns:', list(df.columns))
+print('Shape:', df.shape)
+print(df[['loc_id','lat','lon','housing_class','floor_area_m2','cost_per_m2_kes','tiv_kes','synthetic']].head(6).to_string())
+print()
+print('housing_class counts (rp10 only):')
+print(df[df['return_period_years']==10]['housing_class'].value_counts())
+print()
+print('return_period_years unique:', sorted(df['return_period_years'].unique()))
+print('Total unique buildings:', df['loc_id'].nunique())
