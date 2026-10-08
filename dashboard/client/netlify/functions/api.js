@@ -1,11 +1,12 @@
-const express        = require("express");
-const cors           = require("cors");
-const fs             = require("fs");
-const path           = require("path");
-const csv            = require("csv-parser");
-const multer         = require("multer");
-const XLSX           = require("xlsx");
-const serverless     = require("serverless-http");
+const express    = require("express");
+const cors       = require("cors");
+const fs         = require("fs");
+const path       = require("path");
+const csv        = require("csv-parser");
+const multer     = require("multer");
+const XLSX       = require("xlsx");
+const serverless = require("serverless-http");
+const mongoose   = require("mongoose");
 
 async function pdfParse(buffer) {
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -24,6 +25,44 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── MongoDB ───────────────────────────────────────────────────────────────────
+
+const MONGO_URI = process.env.MONGO_URI;
+let dbConnected = false;
+
+async function connectDB() {
+  if (dbConnected || mongoose.connection.readyState === 1) return;
+  await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
+  dbConnected = true;
+}
+
+const assessmentSchema = new mongoose.Schema({
+  name:               String,
+  lat:                Number,
+  lon:                Number,
+  housing_class:      String,
+  floor_area_m2:      Number,
+  cost_per_m2_kes:    Number,
+  tiv_kes:            Number,
+  risk_tier:          String,
+  damage_ratio_rp100: Number,
+  aal:                Number,
+  suggested_premium:  Number,
+  losses:             Array,
+  assessed_by:        { type: String, default: "user" },
+  assessed_at:        { type: Date, default: Date.now },
+});
+
+const savedPortfolioSchema = new mongoose.Schema({
+  name:        String,
+  buildings:   Array,
+  saved_by:    { type: String, default: "user" },
+  saved_at:    { type: Date, default: Date.now },
+});
+
+const Assessment     = mongoose.models.Assessment     || mongoose.model("Assessment",     assessmentSchema);
+const SavedPortfolio = mongoose.models.SavedPortfolio || mongoose.model("SavedPortfolio", savedPortfolioSchema);
 
 // ── CSV loader ────────────────────────────────────────────────────────────────
 
@@ -76,11 +115,14 @@ function recommendation(tier) {
   }[tier];
 }
 
-// ── middleware to load data before every request ──────────────────────────────
+// ── middleware ────────────────────────────────────────────────────────────────
 
 app.use(async (req, res, next) => {
-  try { await ensureData(); next(); }
-  catch (e) { res.status(500).json({ error: "Data load failed: " + e.message }); }
+  try {
+    await ensureData();
+    if (MONGO_URI) await connectDB();
+    next();
+  } catch (e) { res.status(500).json({ error: "Init failed: " + e.message }); }
 });
 
 // ── GET /api/portfolio ────────────────────────────────────────────────────────
@@ -93,18 +135,12 @@ app.get("/api/portfolio", (req, res) => {
     const dr   = rp100Loss ? num(rp100Loss.damage_ratio) : 0;
     const tier = tierFromDR(dr);
     return {
-      loc_id:             b.loc_id,
-      lat:                num(b.lat),
-      lon:                num(b.lon),
-      housing_class:      b.housing_class,
-      floor_area_m2:      num(b.floor_area_m2),
-      tiv_kes:            num(b.tiv_kes),
-      flood_probability:  num(b.flood_probability_rp100),
-      ml3_anomaly_score:  b.ml3_anomaly_score !== "" ? num(b.ml3_anomaly_score) : null,
-      ml3_flag:           bool(b.ml3_flag),
-      damage_ratio_rp100: dr,
-      risk_tier:          tier,
-      tier_color:         tierColor(tier),
+      loc_id: b.loc_id, lat: num(b.lat), lon: num(b.lon),
+      housing_class: b.housing_class, floor_area_m2: num(b.floor_area_m2),
+      tiv_kes: num(b.tiv_kes), flood_probability: num(b.flood_probability_rp100),
+      ml3_anomaly_score: b.ml3_anomaly_score !== "" ? num(b.ml3_anomaly_score) : null,
+      ml3_flag: bool(b.ml3_flag), damage_ratio_rp100: dr,
+      risk_tier: tier, tier_color: tierColor(tier),
     };
   });
   res.json(data);
@@ -116,20 +152,14 @@ app.get("/api/portfolio/stats", (req, res) => {
   const totalTIV   = portfolio.reduce((s, b) => s + num(b.tiv_kes), 0);
   const totalBldgs = portfolio.length;
   const anomalies  = portfolio.filter((b) => bool(b.ml3_flag)).length;
-
   const tierCounts = { Low: 0, Medium: 0, High: 0, Decline: 0 };
   const tierTIV    = { Low: 0, Medium: 0, High: 0, Decline: 0 };
-
   portfolio.forEach((b) => {
-    const rp100 = lossTable.find(
-      (r) => r.loc_id === b.loc_id && parseInt(r.return_period) === 100
-    );
-    const dr   = rp100 ? num(rp100.damage_ratio) : 0;
+    const rp100 = lossTable.find((r) => r.loc_id === b.loc_id && parseInt(r.return_period) === 100);
+    const dr = rp100 ? num(rp100.damage_ratio) : 0;
     const tier = tierFromDR(dr);
-    tierCounts[tier]++;
-    tierTIV[tier] += num(b.tiv_kes);
+    tierCounts[tier]++; tierTIV[tier] += num(b.tiv_kes);
   });
-
   const rpGroups = {};
   lossTable.forEach((r) => {
     const rp = parseInt(r.return_period);
@@ -140,23 +170,15 @@ app.get("/api/portfolio/stats", (req, res) => {
   const epCurve = Object.entries(rpGroups)
     .map(([rp, v]) => ({ return_period: parseInt(rp), aep: 1 / parseInt(rp), ...v }))
     .sort((a, b) => a.return_period - b.return_period);
-
   const sorted  = [...epCurve].sort((a, b) => a.aep - b.aep);
   const aepPts  = [0, ...sorted.map((r) => r.aep)];
   const lossPts = [0, ...sorted.map((r) => r.net_loss)];
   let aal = 0;
   for (let i = 1; i < aepPts.length; i++)
     aal += 0.5 * (lossPts[i] + lossPts[i - 1]) * (aepPts[i] - aepPts[i - 1]);
-
-  const pureRate  = aal / totalTIV;
+  const pureRate = aal / totalTIV;
   const grossRate = pureRate * 1.35;
-
-  res.json({
-    totalBldgs, totalTIV, anomalies,
-    aal, pureRate, grossRate,
-    grossPremium: totalTIV * grossRate,
-    tierCounts, tierTIV, epCurve,
-  });
+  res.json({ totalBldgs, totalTIV, anomalies, aal, pureRate, grossRate, grossPremium: totalTIV * grossRate, tierCounts, tierTIV, epCurve });
 });
 
 // ── GET /api/building/:id ─────────────────────────────────────────────────────
@@ -164,55 +186,37 @@ app.get("/api/portfolio/stats", (req, res) => {
 app.get("/api/building/:id", (req, res) => {
   const b = portfolio.find((r) => r.loc_id === req.params.id);
   if (!b) return res.status(404).json({ error: "Building not found" });
-
   const losses = lossTable
     .filter((r) => r.loc_id === b.loc_id)
     .map((r) => ({
-      return_period:  parseInt(r.return_period),
-      aep:            num(r.aep),
-      depth_m:        num(r.depth_m),
-      damage_ratio:   num(r.damage_ratio),
-      gross_loss_kes: num(r.gross_loss_kes),
-      deductible_kes: num(r.deductible_kes),
-      net_loss_kes:   num(r.net_loss_kes),
+      return_period: parseInt(r.return_period), aep: num(r.aep),
+      depth_m: num(r.depth_m), damage_ratio: num(r.damage_ratio),
+      gross_loss_kes: num(r.gross_loss_kes), deductible_kes: num(r.deductible_kes),
+      net_loss_kes: num(r.net_loss_kes),
     }))
     .sort((a, b) => a.return_period - b.return_period);
-
   const rp100 = losses.find((r) => r.return_period === 100) || {};
-  const dr    = rp100.damage_ratio || 0;
-  const tier  = tierFromDR(dr);
-
+  const dr = rp100.damage_ratio || 0;
+  const tier = tierFromDR(dr);
   const sorted  = [...losses].sort((a, b) => a.aep - b.aep);
   const aepPts  = [0, ...sorted.map((r) => r.aep)];
   const lossPts = [0, ...sorted.map((r) => r.net_loss_kes)];
   let bldgAAL = 0;
   for (let i = 1; i < aepPts.length; i++)
     bldgAAL += 0.5 * (lossPts[i] + lossPts[i - 1]) * (aepPts[i] - aepPts[i - 1]);
-
-  const tiv       = num(b.tiv_kes);
-  const pureRate  = tiv > 0 ? bldgAAL / tiv : 0;
+  const tiv = num(b.tiv_kes);
+  const pureRate = tiv > 0 ? bldgAAL / tiv : 0;
   const grossRate = pureRate * 1.35;
-
   res.json({
-    loc_id:             b.loc_id,
-    lat:                num(b.lat),
-    lon:                num(b.lon),
-    housing_class:      b.housing_class,
-    floor_area_m2:      num(b.floor_area_m2),
-    cost_per_m2_kes:    num(b.cost_per_m2_kes),
-    tiv_kes:            tiv,
-    flood_probability:  num(b.flood_probability_rp100),
-    ml3_anomaly_score:  b.ml3_anomaly_score !== "" ? num(b.ml3_anomaly_score) : null,
-    ml3_flag:           bool(b.ml3_flag),
-    damage_ratio_rp100: dr,
-    risk_tier:          tier,
-    tier_color:         tierColor(tier),
-    recommendation:     recommendation(tier),
-    aal:                bldgAAL,
-    pure_rate:          pureRate,
-    gross_rate:         grossRate,
-    suggested_premium:  tiv * grossRate,
-    losses,
+    loc_id: b.loc_id, lat: num(b.lat), lon: num(b.lon),
+    housing_class: b.housing_class, floor_area_m2: num(b.floor_area_m2),
+    cost_per_m2_kes: num(b.cost_per_m2_kes), tiv_kes: tiv,
+    flood_probability: num(b.flood_probability_rp100),
+    ml3_anomaly_score: b.ml3_anomaly_score !== "" ? num(b.ml3_anomaly_score) : null,
+    ml3_flag: bool(b.ml3_flag), damage_ratio_rp100: dr,
+    risk_tier: tier, tier_color: tierColor(tier), recommendation: recommendation(tier),
+    aal: bldgAAL, pure_rate: pureRate, gross_rate: grossRate,
+    suggested_premium: tiv * grossRate, losses,
   });
 });
 
@@ -221,14 +225,12 @@ app.get("/api/building/:id", (req, res) => {
 app.get("/api/search", (req, res) => {
   const q = (req.query.q || "").toLowerCase();
   if (!q) return res.json([]);
-  const results = portfolio
-    .filter((b) =>
-      b.loc_id.toLowerCase().includes(q) ||
-      b.housing_class.toLowerCase().includes(q)
-    )
-    .slice(0, 20)
-    .map((b) => ({ loc_id: b.loc_id, housing_class: b.housing_class, tiv_kes: num(b.tiv_kes) }));
-  res.json(results);
+  res.json(
+    portfolio
+      .filter((b) => b.loc_id.toLowerCase().includes(q) || b.housing_class.toLowerCase().includes(q))
+      .slice(0, 20)
+      .map((b) => ({ loc_id: b.loc_id, housing_class: b.housing_class, tiv_kes: num(b.tiv_kes) }))
+  );
 });
 
 // ── POST /api/assess ──────────────────────────────────────────────────────────
@@ -242,23 +244,20 @@ const VULN = {
 
 function logistic(depth, cls) {
   if (depth <= 0) return 0;
-  const p  = VULN[cls];
+  const p = VULN[cls];
   if (!p) return 0;
-  const dr = p.max_dr / (1 + Math.exp(-p.k * (depth - p.d0)));
-  return Math.min(Math.max(dr, 0), p.max_dr);
+  return Math.min(Math.max(p.max_dr / (1 + Math.exp(-p.k * (depth - p.d0))), 0), p.max_dr);
 }
 
 function estimateDepths(lat, lon) {
-  const RPS    = [10, 20, 50, 100, 200, 500];
+  const RPS = [10, 20, 50, 100, 200, 500];
   const CUTOFF = 1.5;
   const result = {};
   RPS.forEach((rp) => {
     const rpRows = lossTable.filter((r) => parseInt(r.return_period) === rp && num(r.depth_m) > 0);
     if (!rpRows.length) { result[rp] = 0; return; }
-    const dists = rpRows.map((r) => ({
-      d:     Math.hypot(num(r.lat) - lat, num(r.lon) - lon),
-      depth: num(r.depth_m),
-    })).sort((a, b) => a.d - b.d).slice(0, 3);
+    const dists = rpRows.map((r) => ({ d: Math.hypot(num(r.lat) - lat, num(r.lon) - lon), depth: num(r.depth_m) }))
+      .sort((a, b) => a.d - b.d).slice(0, 3);
     const nearest = dists[0];
     if (nearest.d > CUTOFF) { result[rp] = 0; return; }
     result[rp] = parseFloat((nearest.depth * Math.max(0, 1 - nearest.d / CUTOFF)).toFixed(3));
@@ -266,8 +265,8 @@ function estimateDepths(lat, lon) {
   return result;
 }
 
-app.post("/api/assess", (req, res) => {
-  const { lat, lon, housing_class, floor_area_m2, cost_per_m2_kes } = req.body;
+app.post("/api/assess", async (req, res) => {
+  const { lat, lon, housing_class, floor_area_m2, cost_per_m2_kes, name } = req.body;
   if (!lat || !lon || !housing_class || !floor_area_m2 || !cost_per_m2_kes)
     return res.status(400).json({ error: "Missing required fields" });
   if (!VULN[housing_class])
@@ -278,14 +277,10 @@ app.post("/api/assess", (req, res) => {
   const DEDUCT = 0.02;
 
   const losses = Object.entries(depths).map(([rp, depth]) => {
-    const dr         = logistic(depth, housing_class);
-    const gross      = dr * tiv;
+    const dr = logistic(depth, housing_class);
+    const gross = dr * tiv;
     const deductible = Math.min(tiv * DEDUCT, gross);
-    return {
-      return_period: parseInt(rp), aep: 1 / parseInt(rp),
-      depth_m: depth, damage_ratio: dr,
-      gross_loss_kes: gross, deductible_kes: deductible, net_loss_kes: gross - deductible,
-    };
+    return { return_period: parseInt(rp), aep: 1 / parseInt(rp), depth_m: depth, damage_ratio: dr, gross_loss_kes: gross, deductible_kes: deductible, net_loss_kes: gross - deductible };
   }).sort((a, b) => a.return_period - b.return_period);
 
   const sorted  = [...losses].sort((a, b) => a.aep - b.aep);
@@ -300,7 +295,7 @@ app.post("/api/assess", (req, res) => {
   const rp100     = losses.find((r) => r.return_period === 100) || {};
   const tier      = tierFromDR(rp100.damage_ratio || 0);
 
-  res.json({
+  const result = {
     tiv_kes: tiv, housing_class,
     floor_area_m2: parseFloat(floor_area_m2),
     cost_per_m2_kes: parseFloat(cost_per_m2_kes),
@@ -310,7 +305,66 @@ app.post("/api/assess", (req, res) => {
     damage_ratio_rp100: rp100.damage_ratio || 0,
     aal, pure_rate: pureRate, gross_rate: grossRate,
     suggested_premium: tiv * grossRate, losses,
-  });
+  };
+
+  // Save to MongoDB
+  if (MONGO_URI) {
+    try {
+      await Assessment.create({
+        name: name || `Assessment ${new Date().toISOString()}`,
+        lat: parseFloat(lat), lon: parseFloat(lon),
+        housing_class, floor_area_m2: parseFloat(floor_area_m2),
+        cost_per_m2_kes: parseFloat(cost_per_m2_kes), tiv_kes: tiv,
+        risk_tier: tier, damage_ratio_rp100: rp100.damage_ratio || 0,
+        aal, suggested_premium: tiv * grossRate, losses,
+      });
+    } catch (e) { console.error("MongoDB save failed:", e.message); }
+  }
+
+  res.json(result);
+});
+
+// ── GET /api/assessments — retrieve saved assessments ─────────────────────────
+
+app.get("/api/assessments", async (req, res) => {
+  if (!MONGO_URI) return res.json([]);
+  try {
+    const docs = await Assessment.find().sort({ assessed_at: -1 }).limit(100);
+    res.json(docs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/assessments/:id ───────────────────────────────────────────────
+
+app.delete("/api/assessments/:id", async (req, res) => {
+  if (!MONGO_URI) return res.json({ ok: true });
+  try {
+    await Assessment.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/portfolios — save extracted portfolio ───────────────────────────
+
+app.post("/api/portfolios", async (req, res) => {
+  if (!MONGO_URI) return res.json({ ok: true });
+  const { name, buildings } = req.body;
+  if (!buildings || !buildings.length)
+    return res.status(400).json({ error: "No buildings provided" });
+  try {
+    const doc = await SavedPortfolio.create({ name: name || "Untitled Portfolio", buildings });
+    res.json(doc);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/portfolios ───────────────────────────────────────────────────────
+
+app.get("/api/portfolios", async (req, res) => {
+  if (!MONGO_URI) return res.json([]);
+  try {
+    const docs = await SavedPortfolio.find().sort({ saved_at: -1 }).limit(50);
+    res.json(docs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── POST /api/extract ─────────────────────────────────────────────────────────
@@ -333,7 +387,7 @@ function classifyConstruction(text) {
 function extractFromPDF(text) {
   const log = ["Parsed PDF text."];
   const buildings = [];
-  const lines  = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const lines    = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const latLonRe = /(-?\d{1,2}\.\d{3,6})\s*(?:°?[NS])?[,\s]+(-?\d{2,3}\.\d{3,6})\s*(?:°?[EW])?/i;
   const areaRe   = /~?(\d[\d,]*\.?\d*)\s*m[²2²]/i;
   const costRe   = /(?:kes|ksh|ksh\.)?\s*([\d,]+)\s*(?:\/\s*m[²2]|per\s*m[²2]|per\s*sqm)/i;
@@ -342,9 +396,8 @@ function extractFromPDF(text) {
   const allLatLons = [];
   for (let i = 0; i < lines.length; i++) {
     const m = latLonRe.exec(lines[i]);
-    if (m) allLatLons.push({ lat: parseFloat(m[1]), lon: parseFloat(m[2]), lineIdx: i });
+    if (m) allLatLons.push({ lat: parseFloat(m[1]), lon: parseFloat(m[2]) });
   }
-
   const isSingleFacility = allLatLons.length > 0 && allLatLons.every(
     (p) => Math.abs(p.lat - allLatLons[0].lat) < 0.01 && Math.abs(p.lon - allLatLons[0].lon) < 0.01
   );
@@ -390,7 +443,6 @@ function extractFromPDF(text) {
       });
     }
   }
-
   log.push(`Extracted ${buildings.length} building(s) from PDF.`);
   return { buildings, log };
 }
@@ -402,7 +454,6 @@ function extractFromSheet(buffer) {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
   log.push(`Read ${rows.length} rows.`);
   if (!rows.length) return { buildings: [], log: [...log, "Sheet is empty."] };
-
   const find = (row, ...candidates) => {
     for (const c of candidates) {
       const key = Object.keys(row).find((k) => k.toLowerCase().includes(c));
@@ -410,7 +461,6 @@ function extractFromSheet(buffer) {
     }
     return null;
   };
-
   const buildings = rows.map((row, i) => {
     const lat = parseFloat(find(row, "lat", "latitude"));
     const lon = parseFloat(find(row, "lon", "long", "longitude"));
@@ -428,7 +478,6 @@ function extractFromSheet(buffer) {
       tiv_kes:         isNaN(tiv)  ? null : tiv,
     };
   }).filter(Boolean);
-
   log.push(`Extracted ${buildings.length} building(s).`);
   return { buildings, log };
 }
@@ -452,7 +501,7 @@ app.post("/api/extract", upload.single("file"), async (req, res) => {
     }
     result.buildings = result.buildings.map((b, i) => ({
       name:            b.name || `Building ${i + 1}`,
-      lat:             b.lat, lon: b.lon,
+      lat: b.lat, lon: b.lon,
       housing_class:   b.housing_class || "permanent_masonry",
       floor_area_m2:   b.floor_area_m2 || null,
       cost_per_m2_kes: b.cost_per_m2_kes || (b.tiv_kes && b.floor_area_m2 ? Math.round(b.tiv_kes / b.floor_area_m2) : null),
