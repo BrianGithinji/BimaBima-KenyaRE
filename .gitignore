@@ -2,7 +2,14 @@ node_modules/
 __pycache__/
 *.pyc
 *.tif
-*.png
 *.pdf
 *.docx
 dashboard/client/dist/
+# exclude generated chart PNGs but keep logo
+01_*.png
+02_*.png
+03_*.png
+04_*.png
+05_*.png
+06_*.png
+underwriter_dashboard.png
