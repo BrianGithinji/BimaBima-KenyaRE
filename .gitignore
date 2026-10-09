@@ -1,15 +1,22 @@
-node_modules/
+# Python
 __pycache__/
 *.pyc
-*.tif
-*.pdf
-*.docx
+*.pyo
+.env
+
+# Node
+node_modules/
 dashboard/client/dist/
-# exclude generated chart PNGs but keep logo
-01_*.png
-02_*.png
-03_*.png
-04_*.png
-05_*.png
-06_*.png
-underwriter_dashboard.png
+dashboard/client/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# TIF files are large — keep CSVs, exclude rasters from git if needed
+# Uncomment below if rasters are too large for GitHub (>100MB each)
+# *.tif
