@@ -20,10 +20,15 @@ const XLSX     = require("xlsx");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const app  = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors({
-  origin: process.env.CLIENT_URL || "*",
+  origin: [
+    "https://bimabima.netlify.app",
+    "http://localhost:3000",
+    process.env.CLIENT_URL,
+  ].filter(Boolean),
+  credentials: true,
 }));
 app.use(express.json());
 
