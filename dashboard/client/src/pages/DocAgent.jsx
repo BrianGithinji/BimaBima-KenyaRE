@@ -216,7 +216,10 @@ export default function DocAgent() {
 
     try {
       addLog("Sending to extraction agent...");
-      const res = await fetch("http://localhost:5000/api/extract", { method: "POST", body: form });
+      const EXTRACT_URL = import.meta.env.VITE_API_URL
+        ? `${import.meta.env.VITE_API_URL}/extract`
+        : (import.meta.env.DEV ? "http://localhost:5000/api/extract" : "https://bimabima-kenyare.onrender.com/api/extract");
+      const res = await fetch(EXTRACT_URL, { method: "POST", body: form });
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); }
