@@ -1,7 +1,7 @@
 [build]
   base    = "dashboard/client"
   command = "npm run build"
-  publish = "dashboard/client/dist"
+  publish = "dist"
 
 [[redirects]]
   from   = "/api/*"
